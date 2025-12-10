@@ -39,7 +39,6 @@ def gui_print(*args, **kwargs):
         log_callback(s)
 builtins.print = gui_print
 
-
 # DOFBOT INIT
 Arm = Arm_Device()
 time.sleep(0.1)
