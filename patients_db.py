@@ -11,7 +11,6 @@ class PatientDatabase:
     """
     Manages patient details, schedules and face encodings.
     """
-
     def __init__(self, json_path="/home/pi/Desktop/patients.json"):
         self.json_path = json_path
         self.patients = {}
@@ -20,7 +19,6 @@ class PatientDatabase:
         self.load_patients()
 
     # JSON load/save
-
     def load_patients(self):
         if os.path.exists(self.json_path):
             try:
@@ -44,7 +42,6 @@ class PatientDatabase:
             print(f"[WARNING] Could not save patients JSON: {e}")
 
     # default data
-
     def _create_default_patients(self):
         self.patients = {
             "nahida": {
@@ -89,7 +86,6 @@ class PatientDatabase:
         }
 
     # faces
-
     def _load_face_encodings(self):
         self.face_encodings = []
         self.patient_names = []
@@ -110,7 +106,6 @@ class PatientDatabase:
                     print(f"[WARNING] Could not load face data for {patient_id}: {e}")
 
     # logging dispense
-
     def record_dispense(self, patient_id, slot_key):
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if patient_id in self.patients:
