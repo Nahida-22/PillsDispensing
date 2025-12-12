@@ -118,7 +118,7 @@ def arm_move_up():
     Arm.Arm_serial_servo_write(4, 90, 1500)
     time.sleep(0.1)
 
-# LIFT & DROP TUNING
+# LIFT & DROP TUNINGa
 TRANSPORT_LIFT_J3 = 50   # how much we lift at joint 3 when travelling
 DROP_DOWN_J3= 0  # how much we lower at drop so the tray doesn’t fall from too high
 RETURN_PICK_DOWN_J3 = 0  # how much we lower when returning trays to original spots
