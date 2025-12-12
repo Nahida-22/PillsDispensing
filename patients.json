@@ -1,0 +1,72 @@
+{
+  "nahida": {
+    "full_name": "Nahida",
+    "condition": "Diabetes",
+    "medications": [
+      "Vildaril",
+      "Clopica"
+    ],
+    "schedule": {
+      "09:00": [
+        "Vildaril"
+      ],
+      "12:00": [
+        "Clopica"
+      ],
+      "14:00": [
+        "Vildaril",
+        "Clopica"
+      ]
+    },
+    "face_image": "/home/pi/Desktop/Coursework/FACES/nahida.jpeg",
+    "face_encoding": null,
+    "last_dispensed": {
+      "09:00": "2025-12-11 15:57:33"
+    }
+  },
+  "adrian": {
+    "full_name": "Adrian",
+    "condition": "Joint Pain",
+    "medications": [
+      "Osteocare",
+      "Flucoxacilin"
+    ],
+    "schedule": {
+      "09:00": [
+        "Osteocare"
+      ],
+      "12:00": [
+        "Flucoxacilin"
+      ],
+      "14:00": []
+    },
+    "face_image": "/home/pi/Desktop/Coursework/FACES/adrian.jpeg",
+    "face_encoding": null,
+    "last_dispensed": {
+      "09:00": "2025-12-11 19:23:47",
+      "12:00": "2025-12-11 19:26:40"
+    }
+  },
+  "roshni": {
+    "full_name": "Roshni",
+    "condition": "Cholesterol",
+    "medications": [
+      "Imdex",
+      "Doliprane"
+    ],
+    "schedule": {
+      "09:00": [
+        "Imdex"
+      ],
+      "12:00": [
+        "Doliprane"
+      ],
+      "14:00": []
+    },
+    "face_image": "/home/pi/Desktop/Coursework/FACES/Roshni.jpeg",
+    "face_encoding": null,
+    "last_dispensed": {
+      "09:00": "2025-12-12 14:04:39"
+    }
+  }
+}

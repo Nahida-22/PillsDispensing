@@ -1,0 +1,10 @@
+Patient: Nahida
+Condition: Diabetes
+Required: Viladril, Clopica
+
+Found at 1 position(s):
+
+Position 3:
+  - Clopica (0.96)
+
+Picked: 1/1
