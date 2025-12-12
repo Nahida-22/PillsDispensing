@@ -16,16 +16,23 @@ from Arm_Lib import Arm_Device
 import face_recognition
 from ultralytics import YOLO
 
+import speech_recognition as sr   # Speech recognition
+
+#SPEECH RECOGNITION CONFIG 
+recognizer = sr.Recognizer()
+
+MIC_INDEX = 3  
+
 #GLOBALS FOR GUI / CAMERA / ROBOT <-> UI LINK
-latest_frame = None       
+latest_frame = None
 camera_running = False
 cap = None
-log_callback = None   
+log_callback = None
 
 # These sync points replace input() in the terminal:
 trays_ready_event = threading.Event()
 next_patient_event = threading.Event()
-next_patient_decision = "stop"  
+next_patient_decision = "stop"
 
 # GUI instance so robot_main can nudge the interface
 gui_instance = None
@@ -38,6 +45,7 @@ def gui_print(*args, **kwargs):
     if log_callback:
         log_callback(s)
 builtins.print = gui_print
+
 
 # DOFBOT INIT
 Arm = Arm_Device()
@@ -71,7 +79,7 @@ P_PICK_6 = [110, 66, 15, 33, 270, 30]    # Left 3
 
 # Center placement positions (where the trays are dropped)
 P_CENTER_PLACE   = [90, 66, 20, 29, 270, 30]  # First slot
-P_CENTER_PLACE_2 = [90, 88, 20, 29, 270, 30]  # Second slot (just next to it)
+P_CENTER_PLACE_2 = [90, 88, 20, 29, 270, 30]  # Second slot
 
 # Safe position above table to move around without hitting anything
 P_ABOVE_PILL = [90, 80, 50, 50, 270, 30]
@@ -119,8 +127,8 @@ def arm_move_up():
 
 # LIFT & DROP TUNING
 TRANSPORT_LIFT_J3 = 50   # how much we lift at joint 3 when travelling
-DROP_DOWN_J3= 0  # how much we lower at drop so the tray doesn’t fall from too high
-RETURN_PICK_DOWN_J3 = 0  # how much we lower when returning trays to original spots
+DROP_DOWN_J3      = 0    # how much we lower at drop so the tray doesn’t fall from too high
+RETURN_PICK_DOWN_J3 = 50 # how much we lift when returning trays to original spots
 
 # CAMERA FRAME ACCESS
 def get_latest_frame():
@@ -231,16 +239,19 @@ def return_trays(tray_moves):
 
         print(f"\n[TRAY] Returning tray {i}/{len(tray_moves)} back to {pos_name}")
 
+        # 1) Go to a high safe pose before moving over the centre
         safe_pos = P_ABOVE_PILL[:5]
         arm_move(safe_pos, 800)
         time.sleep(0.5)
 
+        # 2) Move above tray at center (also high)
         center_transport = drop_pos[:5].copy()
         center_transport[2] += TRANSPORT_LIFT_J3
         print("[TRAY] Moving above tray at center drop area")
         arm_move(center_transport, 800)
         time.sleep(0.5)
 
+        # 3) Lower to grip the tray
         print("[TRAY] Lowering to grip the tray")
         center_grip = drop_pos[:5].copy()
         center_grip[2] += DROP_DOWN_J3
@@ -251,37 +262,47 @@ def return_trays(tray_moves):
         gripper_close()
         time.sleep(0.5)
 
-        print("[TRAY] Lifting tray for travel")
+        # 4) LIFT HIGH before travelling back (this is the important part)
+        print("[TRAY] Lifting tray for travel (high to avoid pills)")
         lift_from_center = center_grip.copy()
-        lift_from_center[2] += RETURN_PICK_DOWN_J3
+        lift_from_center[2] += RETURN_PICK_DOWN_J3   # now 50, not 0
         arm_move(lift_from_center, 800)
         time.sleep(0.5)
 
+        # 5) OPTIONAL extra safety: go via global safe pose
+        arm_move(safe_pos, 800)
+        time.sleep(0.5)
+
+        # 6) Move above original position (also high)
         print(f"[TRAY] Moving over original position: {pos_name}")
         pick_transport = pick_pos[:5].copy()
         pick_transport[2] += TRANSPORT_LIFT_J3
         arm_move(pick_transport, 800)
         time.sleep(0.5)
 
+        # 7) Lower tray back to its original place
         print("[TRAY] Lowering tray back to its original place")
         arm_move(pick_pos[:5], 700)
         time.sleep(0.3)
 
+        # 8) Release tray
         print("[TRAY] Releasing tray")
         gripper_open()
         time.sleep(0.5)
 
+        # 9) Small lift to clear the tray
         clear_pick = pick_pos[:5].copy()
         clear_pick[2] += 15
         arm_move(clear_pick, 700)
         time.sleep(0.5)
 
+    # Finish in a high safe pose
     arm_move(P_ABOVE_PILL[:5], 800)
     print("\n[TRAYS]  All trays returned to where they started.")
 
 # PATIENT DATABASE WITH TIME SLOTS
 class PatientDatabase:
-    def __init__(self):
+    def __init__(self): 
         self.patients = {}
         self.face_encodings = []
         self.patient_names = []
@@ -488,65 +509,16 @@ def capture_clear_image(position_name):
         print("[CAMERA] No frame available (camera not ready?)")
         return None
 
-# SCAN PILL POSITIONS
-def scan_pill_positions(patient_name):
-    pill_positions = [
-        ("Right_1", P_PILL_1, P_PICK_1),
-        ("Right_2", P_PILL_2, P_PICK_2),
-        ("Right_3", P_PILL_3, P_PICK_3),
-        ("Left_1",  P_PILL_4, P_PICK_4),
-        ("Left_2",  P_PILL_5, P_PICK_5),
-        ("Left_3",  P_PILL_6, P_PICK_6),
-    ]
-
-    found_pills = []
-
-    print("\n" + "=" * 60)
-    print(f"SCANNING PILL POSITIONS FOR {patient_name.upper()}")
-    print("=" * 60)
-
-    gripper_open()
-    arm_move(P_ABOVE_PILL[:5], 1000)
-
-    for position_name, pill_scan_pos, pill_pick_pos in pill_positions:
-        print(f"\n CHECKING {position_name}")
-        print("-" * 30)
-
-        arm_move(pill_scan_pos[:5], 1000)
-        time.sleep(0.5)
-
-        frame = capture_clear_image(position_name)
-        if frame is not None:
-            raw_path = f"/home/pi/Desktop/scan_{position_name}.jpg"
-            cv2.imwrite(raw_path, frame)
-            print(f"[SAVE] Raw scan saved: {raw_path}")
-
-            detected_img, detections = yolo_detection(frame.copy())
-            det_path = f"/home/pi/Desktop/scan_{position_name}_detected.jpg"
-            cv2.imwrite(det_path, detected_img)
-            print(f"[SAVE] Detection image saved: {det_path}")
-
-            if detections:
-                print(f" FOUND {len(detections)} pill(s)")
-                for label, conf, bbox in detections:
-                    print(f"   • {label} ({conf:.2f})")
-
-                found_pills.append({
-                    "position": position_name,
-                    "scan_pos": pill_scan_pos,
-                    "pick_pos": pill_pick_pos,
-                    "detections": detections
-                })
-            else:
-                print(" No pills detected at this spot.")
-
-        arm_move(P_ABOVE_PILL[:5], 1000)
-        time.sleep(0.3)
-
-    return found_pills
-
-# PICK PILLS PER TIME SLOT
-def pick_all_detected_pills(found_pills, patient, slot_key):
+# --- SCAN + IMMEDIATE PICK FOR SLOT ---
+def scan_and_pick_for_slot(patient, slot_key):
+    """
+    For a given patient and time-slot:
+      - Go tray by tray
+      - Run YOLO at each tray
+      - If this tray has a needed med for this slot (and not already picked),
+        immediately pick it and drop at center.
+    Returns: (successful_picks, tray_moves_for_return)
+    """
     patient_name = patient["name"]
     schedule = patient.get("schedule", {})
     slot_meds = schedule.get(slot_key, patient["medications"])
@@ -558,87 +530,102 @@ def pick_all_detected_pills(found_pills, patient, slot_key):
     needed_meds_norm = {normalize_name(m): m for m in slot_meds}
     needed_meds_display = list(needed_meds_norm.values())
 
-    if not found_pills:
-        print("\n[PICK] No pills to pick up.")
-        return 0, []
-
     print("\n" + "=" * 60)
-    print(f"FILTERING PILLS FOR {patient_name.upper()} at time slot {slot_key}")
-    print(f"Medications required at this slot: {', '.join(needed_meds_display)}")
+    print(f"SCAN + IMMEDIATE PICK FOR {patient_name.upper()} – slot {slot_key}")
+    print(f"Medications required: {', '.join(needed_meds_display)}")
     print("=" * 60)
 
-    filtered_pills = []
-    for pill_info in found_pills:
-        detections = pill_info["detections"]
-        meds_here = set()
+    pill_positions = [
+        ("Right_1", P_PILL_1, P_PICK_1),
+        ("Right_2", P_PILL_2, P_PICK_2),
+        ("Right_3", P_PILL_3, P_PICK_3),
+        ("Left_1",  P_PILL_4, P_PICK_4),
+        ("Left_2",  P_PILL_5, P_PICK_5),
+        ("Left_3",  P_PILL_6, P_PICK_6),
+    ]
 
+    gripper_open()
+    arm_move(P_ABOVE_PILL[:5], 1000)
+
+    picked_meds_norm = set()  # which meds (normalized) we already picked
+    tray_moves = []           # to later return trays
+    successful_picks = 0
+
+    for position_name, pill_scan_pos, pill_pick_pos in pill_positions:
+        if len(picked_meds_norm) == len(needed_meds_norm):
+            print("[PICK] All required meds already picked for this slot.")
+            break
+
+        print(f"\n[SCAN] Moving to {position_name} for detection")
+        arm_move(pill_scan_pos[:5], 1000)
+        time.sleep(0.5)
+
+        frame = capture_clear_image(position_name)
+        if frame is None:
+            print("[SCAN] No frame captured, skipping this position.")
+            arm_move(P_ABOVE_PILL[:5], 1000)
+            continue
+
+        detected_img, detections = yolo_detection(frame.copy())
+
+        if not detections:
+            print("[SCAN] No pills detected at this tray.")
+            arm_move(P_ABOVE_PILL[:5], 1000)
+            continue
+
+        print(f"[SCAN] Found {len(detections)} object(s) at {position_name}:")
+        meds_here = set()
         for (label, conf, bbox) in detections:
             med_name_raw = label_to_medication(label)
             med_key = normalize_name(med_name_raw)
+            print(f"   • {label} ({conf:.2f}) -> mapped to '{med_name_raw}'")
             if med_key in needed_meds_norm:
                 meds_here.add(needed_meds_norm[med_key])
 
-        if meds_here:
-            pill_info["meds_for_patient"] = list(meds_here)
-            filtered_pills.append(pill_info)
-
-    if not filtered_pills:
-        print("\n[PICK] None of the trays match this patient's meds for this time slot.")
-        return 0, []
-
-    print(f"[PICK] {len(filtered_pills)} tray position(s) have the right meds.")
-    for fp in filtered_pills:
-        print(f"  - {fp['position']} -> {fp.get('meds_for_patient', [])}")
-
-    successful_picks = 0
-    used_positions = set()
-    tray_moves = []
-
-    for med_index, med in enumerate(slot_meds):
-        print(f"\n[PICK] Searching for a tray containing: {med}")
-
-        candidate = None
-        for pill_info in filtered_pills:
-            pos_name = pill_info["position"]
-            if pos_name in used_positions:
-                continue
-            meds_for_pos = pill_info.get("meds_for_patient", [])
-            if med in meds_for_pos:
-                candidate = pill_info
-                break
-
-        if candidate is None:
-            print(f"[PICK] ⚠️ No tray found for medication: {med}")
+        if not meds_here:
+            print("[SCAN] Tray meds do not match this patient's schedule.")
+            arm_move(P_ABOVE_PILL[:5], 1000)
             continue
 
-        pos_name = candidate["position"]
-        pick_pos = candidate["pick_pos"]
-        meds_for_pos = candidate.get("meds_for_patient", [])
+        # Choose one med from this tray that we still need
+        med_to_pick = None
+        for m in slot_meds:  # keep original order
+            if m in meds_here and normalize_name(m) not in picked_meds_norm:
+                med_to_pick = m
+                break
 
+        if med_to_pick is None:
+            print("[SCAN] All meds on this tray already picked previously.")
+            arm_move(P_ABOVE_PILL[:5], 1000)
+            continue
+
+        med_index = len(picked_meds_norm)
         if med_index == 0:
             drop_position = P_CENTER_PLACE
-        elif med_index == 1:
-            drop_position = P_CENTER_PLACE_2
+            drop_name = "P_CENTER_PLACE"
         else:
             drop_position = P_CENTER_PLACE_2
+            drop_name = "P_CENTER_PLACE_2"
 
-        print(f"[PICK] -> Using tray {pos_name} with meds: {', '.join(meds_for_pos)}")
-        print(f"[PICK] -> Dropping at: {'P_CENTER_PLACE' if med_index == 0 else 'P_CENTER_PLACE_2'}")
+        print(f"[PICK] Tray {position_name} has required med: {med_to_pick}")
+        print(f"[PICK] Immediately picking this tray and dropping at {drop_name}")
 
-        success = pick_pill_simple(pos_name, pick_pos, drop_position)
+        success = pick_pill_simple(position_name, pill_pick_pos, drop_position)
+
         if success:
             successful_picks += 1
-            used_positions.add(pos_name)
+            picked_meds_norm.add(normalize_name(med_to_pick))
             tray_moves.append({
-                "position": pos_name,
-                "pick_pos": pick_pos,
+                "position": position_name,
+                "pick_pos": pill_pick_pos,
                 "drop_pos": drop_position
             })
-            print(f"[PICK] Completed pick for medication: {med}")
+            print(f"[PICK] Completed pick for medication: {med_to_pick}")
         else:
-            print(f"[PICK] Could not pick medication: {med}")
+            print(f"[PICK] Failed to pick tray {position_name} for med {med_to_pick}")
 
-        time.sleep(1)
+        arm_move(P_ABOVE_PILL[:5], 1000)
+        time.sleep(0.3)
 
     print(f"\n[PICK] SUMMARY for {patient_name} at {slot_key}: "
           f"{successful_picks} tray(s) picked for {len(slot_meds)} medication(s).")
@@ -690,16 +677,12 @@ def robot_main(time_slot_key):
                     print(f"✅ PATIENT CONFIRMED: {patient['name']} for {time_slot_key}")
                     print("=" * 60)
 
-                    found_pills = scan_pill_positions(patient['name'])
+                    picked_count, tray_moves = scan_and_pick_for_slot(patient, time_slot_key)
 
-                    if found_pills:
-                        print(f"\n✅ Found trays at {len(found_pills)} positions.")
-                        picked_count, tray_moves = pick_all_detected_pills(found_pills, patient, time_slot_key)
-                        if picked_count > 0:
-                            patient_db.record_dispense(patient['id'], time_slot_key)
+                    if picked_count > 0:
+                        patient_db.record_dispense(patient['id'], time_slot_key)
                     else:
-                        print("\n❌ No trays with pills were detected.")
-                        picked_count, tray_moves = 0, []
+                        print("\n❌ No trays with pills were picked.")
 
                     print("\n[ACTION] Moving to a high, safe pose above the trays...")
                     arm_move(P_ABOVE_PILL[:5], 1000)
@@ -714,7 +697,6 @@ def robot_main(time_slot_key):
                     if gui_instance:
                         gui_instance.set_phase("WAIT_TRAYS")
 
-                    # Robot waits here until GUI button is pressed
                     while not trays_ready_event.is_set():
                         time.sleep(0.1)
 
@@ -766,14 +748,14 @@ def robot_main(time_slot_key):
 
 # GUI WITH customtkinter
 class DofbotGUI(ctk.CTk):
-    def __init__(self):
+    def __init__(self): 
         super().__init__()
 
         global log_callback, gui_instance
         log_callback = self.append_log
         gui_instance = self
 
-        self.title("DOFBOT Pill Assistant")
+        self.title("DOCBOT Smart Pill Assistant")
         self.geometry("1200x700")
 
         # Robotic style: dark background + teal / cyan accents
@@ -783,7 +765,7 @@ class DofbotGUI(ctk.CTk):
 
         self.time_slot_var = ctk.StringVar(value="09:00")
 
-        #  TOP BAR 
+        #  TOP BAR
         top_bar = ctk.CTkFrame(self, fg_color="#070b1f", corner_radius=0)
         top_bar.pack(side="top", fill="x")
 
@@ -841,7 +823,7 @@ class DofbotGUI(ctk.CTk):
         )
         self.exit_button.pack(side="right", padx=10, pady=8)
 
-        #  MAIN BODY 
+        #  MAIN BODY
         main_frame = ctk.CTkFrame(self, fg_color="#020617")
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -867,7 +849,7 @@ class DofbotGUI(ctk.CTk):
 
         self.phase_label = ctk.CTkLabel(
             status_strip,
-            text="Status: idle",
+            text="Status: idle (listening for 'hello dofbot')",
             font=ctk.CTkFont(size=13),
             text_color="#A5B4FC",
         )
@@ -898,7 +880,7 @@ class DofbotGUI(ctk.CTk):
             text_color="#E5E7EB",
         )
         self.log_text.pack(fill="both", expand=True, padx=6, pady=(0, 6))
-        self.log_text.insert("end", "[INFO] GUI ready. Choose a time slot and click 'Start session'.\n")
+        self.log_text.insert("end", "[INFO] GUI ready. I am listening for 'hello dofbot', or click 'Start session'.\n")
         self.log_text.configure(state="disabled")
 
         # Interaction buttons for tray + next patient
@@ -938,13 +920,23 @@ class DofbotGUI(ctk.CTk):
         self.camera_thread_started = False
         self.robot_thread_running = False
 
+        # Voice trigger state
+        self.voice_stop_event = threading.Event()
+
+        # Start background voice listener as soon as GUI loads
+        voice_thread = threading.Thread(
+            target=self._voice_listener_thread,
+            daemon=True
+        )
+        voice_thread.start()
+
         # Camera polling
         self.after(30, self.update_camera_frame)
 
         # Handle window close
         self.protocol("WM_DELETE_WINDOW", self.close_app)
 
-    #  status / phase management 
+    #  status / phase management
     def set_phase(self, phase: str):
         """
         Update small status line and which buttons are active.
@@ -968,19 +960,19 @@ class DofbotGUI(ctk.CTk):
             self.stop_session_button.configure(state="normal")
         else:
             # IDLE or anything else
-            self.phase_label.configure(text="Status: idle")
+            self.phase_label.configure(text="Status: idle (listening for 'hello dofbot')")
             self.trays_button.configure(state="disabled")
             self.next_patient_button.configure(state="disabled")
             self.stop_session_button.configure(state="disabled")
 
-    #  logging 
+    #  logging
     def append_log(self, line: str):
         self.log_text.configure(state="normal")
         self.log_text.insert("end", line + "\n")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
-    #  camera handling 
+    #  camera handling
     def start_camera(self):
         global cap, camera_running
         if camera_running:
@@ -1018,7 +1010,66 @@ class DofbotGUI(ctk.CTk):
                 self.camera_label.image = imgtk
         self.after(30, self.update_camera_frame)
 
-    #  GUI buttons that talk to robot 
+    #  background voice listener
+    def _voice_listener_thread(self):
+        """
+        Background thread that waits for 'hello dofbot' (or 'hello' / 'hi dofbot').
+        When detected, it starts the robot session if not already running.
+        """
+        while not self.voice_stop_event.is_set():
+            print("\n[VOICE] Say 'hello dofbot' to start the robot session...")
+            try:
+                with sr.Microphone(device_index=MIC_INDEX) as mic:
+                    recognizer.adjust_for_ambient_noise(mic, duration=0.5)
+                    print("[VOICE] Listening in background...")
+
+                    audio = recognizer.listen(mic, timeout=5, phrase_time_limit=5)
+                    text = recognizer.recognize_google(audio).lower()
+                    
+
+                    if "hello dofbot" in text or "hi dofbot" in text or "hello" in text:
+                        print("[VOICE] 👋 Wake word detected from background listener!")
+                        # Start robot on main (GUI) thread
+                        self.after(0, self.start_robot_via_voice)
+                        return  # stop this listener thread
+
+            except sr.WaitTimeoutError:
+                # No speech – just loop again unless stop event is set
+                continue
+            except sr.UnknownValueError:
+                print("[VOICE] Could not understand, listening again...")
+                continue
+            except sr.RequestError as e:
+                print(f"[VOICE] Speech recognition service error: {e}")
+                # Fall back: stop background listener, user can use Start button
+                return
+            except Exception as e:
+                print(f"[VOICE] Microphone error in background listener: {e}")
+                return
+
+    def start_robot_via_voice(self):
+        """
+        Called from background voice listener when 'hello dofbot' is detected.
+        Starts the robot session if not already running.
+        """
+        if self.robot_thread_running:
+            print("[VOICE] Robot already running, ignoring wake word.")
+            return
+
+        self.start_camera()
+
+        slot = self.time_slot_var.get()
+        print(f"[GUI] Voice trigger: starting robot for time slot {slot}")
+        self.robot_thread_running = True
+        self.start_button.configure(state="disabled", text="Running...")
+
+        # Stop listening during this session
+        self.voice_stop_event.set()
+
+        t = threading.Thread(target=self._run_robot_thread, args=(slot,), daemon=True)
+        t.start()
+
+    #  GUI buttons that talk to robot
     def trays_ready_clicked(self):
         """User confirms trays are empty and back at center positions."""
         trays_ready_event.set()
@@ -1043,7 +1094,7 @@ class DofbotGUI(ctk.CTk):
         self.next_patient_button.configure(state="disabled")
         self.stop_session_button.configure(state="disabled")
 
-    #  robot start 
+    #  robot start via button
     def start_robot_clicked(self):
         if self.robot_thread_running:
             print("[INFO] Robot is already running.")
@@ -1052,9 +1103,12 @@ class DofbotGUI(ctk.CTk):
         self.start_camera()
 
         slot = self.time_slot_var.get()
-        print(f"[GUI] Starting robot for time slot {slot}")
+        print(f"[GUI] Start button: starting robot for time slot {slot}")
         self.robot_thread_running = True
         self.start_button.configure(state="disabled", text="Running...")
+
+        # Stop voice listener during the active session
+        self.voice_stop_event.set()
 
         t = threading.Thread(target=self._run_robot_thread, args=(slot,), daemon=True)
         t.start()
@@ -1062,6 +1116,7 @@ class DofbotGUI(ctk.CTk):
     def _run_robot_thread(self, slot_key):
         try:
             self.set_phase("IDLE")
+            self.append_log("[INFO] Starting robot logic...")
             robot_main(slot_key)
         finally:
             self.robot_thread_running = False
@@ -1073,10 +1128,22 @@ class DofbotGUI(ctk.CTk):
         self.set_phase("IDLE")
         self.append_log("[INFO] Robot session ended. You can change the time slot and start again.")
 
-    #  close app 
+        # Re-enable voice listening for the next session
+        self.voice_stop_event.clear()
+        voice_thread = threading.Thread(
+            target=self._voice_listener_thread,
+            daemon=True
+        )
+        voice_thread.start()
+
+    #  close app
     def close_app(self):
         """Stop camera, close GUI and exit."""
         self.stop_camera()
+        try:
+            self.voice_stop_event.set()
+        except Exception:
+            pass
         try:
             self.destroy()
         except:
@@ -1084,6 +1151,7 @@ class DofbotGUI(ctk.CTk):
         os._exit(0)
 
 # ENTRY POINT
+
 if __name__ == "__main__":
     app = DofbotGUI()
     app.mainloop()

@@ -1,48 +1,64 @@
+# patient_db.py
 #!/usr/bin/env python3
 # coding=utf-8
 
 import json
 import os
 from datetime import datetime
+
 import face_recognition
 
 
+#  NAME NORMALIZATION & MAPPING 
+def normalize_name(s: str) -> str:
+    return "".join(c.lower() for c in s if c.isalnum())
+
+
+CLASS_TO_MED = {
+    "Vildaril": "Vildaril",
+    "Clopica": "Clopica",
+    "Osteocare": "Osteocare",
+    "Flucoxacilin": "Flucoxacilin",
+    "Imdex": "Imdex",
+    "Doliprane": "Doliprane",
+}
+CLASS_TO_MED_NORM = {normalize_name(k): v for k, v in CLASS_TO_MED.items()}
+
+
+def label_to_medication(label: str) -> str:
+    key = normalize_name(label)
+    if key in CLASS_TO_MED_NORM:
+        return CLASS_TO_MED_NORM[key]
+    return label
+
+
+#  PATIENT DATABASE WITH TIME SLOTS 
 class PatientDatabase:
-    """
-    Manages patient details, schedules and face encodings.
-    """
-    def __init__(self, json_path="/home/pi/Desktop/patients.json"):
-        self.json_path = json_path
+    def __init__(self):
         self.patients = {}
         self.face_encodings = []
         self.patient_names = []
         self.load_patients()
 
-    # JSON load/save
     def load_patients(self):
-        if os.path.exists(self.json_path):
+        patients_file = "/home/pi/Desktop/patients.json"
+
+        if os.path.exists(patients_file):
             try:
-                with open(self.json_path, 'r') as f:
+                with open(patients_file, 'r') as f:
                     self.patients = json.load(f)
                 print(f"[INFO] Loaded {len(self.patients)} patients from JSON")
-            except Exception as e:
-                print(f"[WARNING] Could not load patients file ({e}), using defaults.")
-                self._create_default_patients()
+            except Exception:
+                print("[WARNING] Could not load patients file, switching to defaults.")
+                self.create_default_patients()
         else:
-            self._create_default_patients()
+            self.create_default_patients()
             self.save_patients()
 
-        self._load_face_encodings()
+        self.load_face_encodings()
 
-    def save_patients(self):
-        try:
-            with open(self.json_path, 'w') as f:
-                json.dump(self.patients, f, indent=2)
-        except Exception as e:
-            print(f"[WARNING] Could not save patients JSON: {e}")
-
-    # default data
-    def _create_default_patients(self):
+    def create_default_patients(self):
+        # Time-based schedule per patient
         self.patients = {
             "nahida": {
                 "full_name": "Nahida",
@@ -85,8 +101,7 @@ class PatientDatabase:
             }
         }
 
-    # faces
-    def _load_face_encodings(self):
+    def load_face_encodings(self):
         self.face_encodings = []
         self.patient_names = []
 
@@ -102,10 +117,13 @@ class PatientDatabase:
                         self.patient_names.append(patient_id)
                         data["face_encoding"] = None
                         print(f"[INFO] Loaded face data for {data['full_name']}")
-                except Exception as e:
-                    print(f"[WARNING] Could not load face data for {patient_id}: {e}")
+                except Exception:
+                    print(f"[WARNING] Could not load face data for {patient_id}")
 
-    # logging dispense
+    def save_patients(self):
+        with open("/home/pi/Desktop/patients.json", 'w') as f:
+            json.dump(self.patients, f, indent=2)
+
     def record_dispense(self, patient_id, slot_key):
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if patient_id in self.patients:
@@ -113,3 +131,7 @@ class PatientDatabase:
             self.patients[patient_id]["last_dispensed"][slot_key] = now_str
             self.save_patients()
             print(f"[INFO] Logged dispense for {patient_id} at {slot_key} -> {now_str}")
+
+
+# Single shared instance
+patient_db = PatientDatabase()
